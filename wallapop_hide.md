@@ -22,4 +22,5 @@ Userscript para [Tampermonkey](https://www.tampermonkey.net/) que oculta artícu
 ## Notas
 
 - Los artículos ocultos se guardan en `localStorage` bajo la clave `wallapop_hidden_items`, por lo que la lista persiste entre sesiones en el mismo navegador.
+- Los textos visibles se adaptan al idioma del dominio: español en `es.wallapop.com` e inglés en el resto.
 - Funciona en `es.wallapop.com` y `wallapop.com`.
