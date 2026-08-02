@@ -4,10 +4,8 @@
 // @version      0.2
 // @description  Hide specific items in Wallapop search results
 // @author       rauldzmartin@gmail.com
-// @match        https://es.wallapop.com/*
-// @match        https://wallapop.com/*
-// @exclude      https://es.wallapop.com/app/favorites/*
-// @exclude      https://wallapop.com/app/favorites/*
+// @match        https://*.wallapop.com/*
+// @exclude      https://*.wallapop.com/app/favorites/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=wallapop.com
 // @run-at       document-start
 // @grant        none
