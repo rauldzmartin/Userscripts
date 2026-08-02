@@ -15,6 +15,7 @@
     'use strict';
 
     const STORAGE_KEY = 'wallapop_hidden_items';
+    const TOGGLE_KEY = 'wallapop_hide_toggle';
     const FALLBACK_CLASS = 'wallapop-hidden-fallback';
     const STYLES_ID = 'wallapop-hide-styles';
     const TOGGLE_BTN_ID = 'wallapop-toggle-hidden-btn';
@@ -49,7 +50,16 @@
             hideBtn: 'Hide this item',
         };
 
-    let isHidingDisabled = false;
+    function getStoredFlag() {
+        try {
+            return localStorage.getItem(TOGGLE_KEY) === '1';
+        } catch {
+            return false;
+        }
+    }
+
+    // Toggle state survives reloads and SPA navigation
+    let isHidingDisabled = getStoredFlag();
     let lastPath = location.pathname;
     let titleModified = false;
     let allHiddenActive = false;
@@ -141,6 +151,9 @@
 
     function toggleHiddenItems() {
         isHidingDisabled = !isHidingDisabled;
+        try {
+            localStorage.setItem(TOGGLE_KEY, isHidingDisabled ? '1' : '0');
+        } catch {}
         const style = document.getElementById(STYLES_ID);
         if (style) style.disabled = isHidingDisabled;
         document.getElementById(TOGGLE_BTN_ID)?.setAttribute('text', toggleBtnText());
