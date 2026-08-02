@@ -139,7 +139,7 @@
         btn.title = T.blocked;
     }
 
-    const toggleBtnText = () => isHidingDisabled ? T.hide : `${T.show} (${getHiddenItems().length})`;
+    const toggleBtnText = () => isHidingDisabled ? T.hide : T.show;
 
     function toggleHiddenItems() {
         isHidingDisabled = !isHidingDisabled;
