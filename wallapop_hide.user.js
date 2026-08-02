@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      0.2
 // @description  Hide specific items in Wallapop search results
-// @author       Antigravity
+// @author       rauldzmartin@gmail.com
 // @match        https://es.wallapop.com/*
 // @match        https://wallapop.com/*
 // @exclude      https://es.wallapop.com/app/favorites/*
