@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.0.3
+// @version      1.0.4
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -305,10 +305,12 @@
                 const items = getHidden();
                 if (items.includes(id)) {
                     removeHidden(id); showCard(link);
+                    console.log(`[wallapop_hide_items] Item ${id} unhidden`);
                     btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
                     btn.title = T.hideBtn;
                 } else {
                     addHidden(id); hideCard(link); block(btn);
+                    console.log(`[wallapop_hide_items] Item ${id} hidden`);
                 }
             });
 
