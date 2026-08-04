@@ -174,7 +174,16 @@
         if (!items.includes(id)) { items.push(id); localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); injectStyles(); sync.schedule(); }
     };
 
+    const removeHidden = id => {
+        if (!/^\d+$/.test(id)) return;
+        const items = getHidden();
+        const idx = items.indexOf(id);
+        if (idx !== -1) { items.splice(idx, 1); localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); injectStyles(); sync.schedule(); }
+    };
+
     const hideCard = link => { if (!disabled) link.closest('article, tsl-public-item-card')?.parentElement?.classList.add(FALLBACK_CLASS); };
+
+    const showCard = link => { link.closest('article, tsl-public-item-card')?.parentElement?.classList.remove(FALLBACK_CLASS); };
 
     const btnText = () => disabled ? T.hide : T.show;
 
@@ -274,7 +283,14 @@
             if (hidden.has(id)) block(btn);
             btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
-                addHidden(id); hideCard(link); block(btn);
+                const items = getHidden();
+                if (items.includes(id)) {
+                    removeHidden(id); showCard(link);
+                    btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
+                    btn.title = T.hideBtn;
+                } else {
+                    addHidden(id); hideCard(link); block(btn);
+                }
             });
 
             let host = btn;
