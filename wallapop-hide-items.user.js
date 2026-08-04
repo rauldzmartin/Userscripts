@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.0.4
+// @version      1.0.5
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -34,9 +34,10 @@
           EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--chds-color-content-high, #29363d)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="margin:auto;display:block"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
           BLOCK_STROKE = 'var(--chds-color-negative-mid, #ce3528)',
           SYNC_INTERVAL = 30000, WRITE_DEBOUNCE = 2000,
-          GIST_CFG = 'wallapop_gist_cfg', GIST_FILE = 'wallapop-blocked-items.json';
+          GIST_CFG = 'wallapop_gist_cfg', GIST_FILE = 'wallapop-blocked-items.json',
+          LAST_SYNC_KEY = 'wallapop_last_sync';
 
-    let pushTimer = null, syncing = false;
+    let pushTimer = null, syncing = false, lastRemoteTimestamp = null;
 
     const T = location.hostname.startsWith('es.') ? {
         hiddenTitle: 'Todos los artículos de esta búsqueda están ocultos. Usa «Mostrar ocultos» para verlos.',
@@ -50,6 +51,10 @@
 
     let disabled = (() => { try { return localStorage.getItem(TOGGLE_KEY) === '1'; } catch { return false; }})(),
         lastPath = location.pathname, titleModified = false, allHidden = false;
+    
+    // Cargar último timestamp conocido
+    try { lastRemoteTimestamp = localStorage.getItem(LAST_SYNC_KEY); } catch {}
+    
     const transient = new Set(),
           extractId = href => href?.match(ID_RE)?.[1] ?? null,
           cardId = c => extractId(c.querySelector(LINK)?.href),
@@ -93,7 +98,9 @@
                 .then(r => {
                     const content = JSON.parse(r.responseText).files[GIST_FILE]?.content;
                     if (!content) return;
-                    const remote = JSON.parse(content).blocked || [];
+                    const remoteData = JSON.parse(content);
+                    const remote = remoteData.blocked || [];
+                    const remoteTimestamp = remoteData.updated_at;
                     const local = getHidden();
                     const merged = [...new Set([...local, ...remote])];
                     if (merged.length > local.length) {
@@ -103,6 +110,10 @@
                     } else if (remote.length > 0) {
                         console.log(`[wallapop_hide_items] Fetched ${remote.length} items, already in sync`);
                     }
+                    if (remoteTimestamp) {
+                        lastRemoteTimestamp = remoteTimestamp;
+                        try { localStorage.setItem(LAST_SYNC_KEY, remoteTimestamp); } catch {}
+                    }
                 })
                 .catch(e => console.warn('[wallapop_hide_items] Fetch failed:', e.status || e))
                 .finally(() => syncing = false);
@@ -110,19 +121,47 @@
 
         push() {
             if (!this.cfg()) return;
-            const payload = JSON.stringify({
-                files: {
-                    [GIST_FILE]: {
-                        content: JSON.stringify({
-                            blocked: getHidden(),
-                            updated_at: new Date().toISOString(),
-                            version: 1
-                        }, null, 2)
+            
+            // Verificar si el remoto es más reciente antes de pushear
+            req('GET', `gists/${this.cfg().id}`)
+                .then(r => {
+                    const content = JSON.parse(r.responseText).files[GIST_FILE]?.content;
+                    if (content) {
+                        const remoteData = JSON.parse(content);
+                        const remoteTimestamp = remoteData.updated_at;
+                        
+                        // Si el remoto es más nuevo, mergear primero
+                        if (remoteTimestamp && lastRemoteTimestamp && remoteTimestamp > lastRemoteTimestamp) {
+                            console.log(`[wallapop_hide_items] Remote is newer, merging before push`);
+                            const remote = remoteData.blocked || [];
+                            const local = getHidden();
+                            const merged = [...new Set([...local, ...remote])];
+                            localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+                            injectStyles();
+                        }
                     }
-                }
-            });
-            req('PATCH', `gists/${this.cfg().id}`, payload)
-                .then(() => console.log(`[wallapop_hide_items] Pushed ${getHidden().length} items to Gist`))
+                    
+                    // Hacer el PUSH
+                    const now = new Date().toISOString();
+                    const payload = JSON.stringify({
+                        files: {
+                            [GIST_FILE]: {
+                                content: JSON.stringify({
+                                    blocked: getHidden(),
+                                    updated_at: now,
+                                    version: 1
+                                }, null, 2)
+                            }
+                        }
+                    });
+                    
+                    return req('PATCH', `gists/${this.cfg().id}`, payload).then(() => now);
+                })
+                .then(timestamp => {
+                    lastRemoteTimestamp = timestamp;
+                    try { localStorage.setItem(LAST_SYNC_KEY, timestamp); } catch {}
+                    console.log(`[wallapop_hide_items] Pushed ${getHidden().length} items to Gist`);
+                })
                 .catch(e => {
                     if (e.status === 429) setTimeout(() => this.push(), 60000);
                     else console.warn('[wallapop_hide_items] Push failed:', e.status || e);
