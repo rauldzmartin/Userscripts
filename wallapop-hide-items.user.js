@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.0.2
+// @version      1.0.3
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -187,6 +187,24 @@
 
     const btnText = () => disabled ? T.hide : T.show;
 
+    function updateButtonsState() {
+        const hidden = new Set(getHidden());
+        document.querySelectorAll('button[aria-label="Hide item"]').forEach(btn => {
+            const card = btn.closest('[data-hide-processed="true"]');
+            if (!card) return;
+            const link = card.querySelector(LINK);
+            if (!link) return;
+            const id = extractId(link.href);
+            if (!id) return;
+            if (hidden.has(id)) {
+                block(btn);
+            } else {
+                btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
+                btn.title = T.hideBtn;
+            }
+        });
+    }
+
     function toggle() {
         disabled = !disabled;
         console.log(`[wallapop_hide_items] ${disabled ? 'Showing' : 'Hiding'} hidden items`);
@@ -194,10 +212,8 @@
         const s = document.getElementById(STYLES_ID);
         if (s) s.disabled = disabled;
         document.getElementById(TOGGLE_BTN_ID)?.setAttribute('text', btnText());
-        document.querySelectorAll('button[aria-label="Hide item"]').forEach(btn => btn.parentElement?.tagName === 'SPAN' ? btn.parentElement.remove() : btn.remove());
-        document.querySelectorAll('[data-hide-processed="true"]').forEach(el => el.removeAttribute('data-hide-processed'));
-        if (disabled) setTimeout(() => { fixCards(); processCards(); }, 50);
-        else processCards();
+        if (disabled) setTimeout(fixCards, 50);
+        updateButtonsState();
     }
 
     function fixCards() {
