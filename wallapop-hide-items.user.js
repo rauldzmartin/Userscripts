@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.0.5
+// @version      1.1.3
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -242,6 +242,24 @@
                 btn.title = T.hideBtn;
             }
         });
+
+        // Update detail page button state
+        const detailContainer = document.querySelector('[data-hide-detail-processed="true"]');
+        if (detailContainer) {
+            const detailBtn = detailContainer.querySelector('button[aria-label="Hide item"]');
+            if (detailBtn) {
+                const match = location.pathname.match(/\/item\/[^/]+-(\d+)/);
+                if (match) {
+                    const id = match[1];
+                    if (hidden.has(id)) {
+                        block(detailBtn);
+                    } else {
+                        detailBtn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
+                        detailBtn.title = T.hideBtn;
+                    }
+                }
+            }
+        }
     }
 
     function toggle() {
@@ -372,10 +390,72 @@
         });
     }
 
+    const EYE_OFF_DETAIL = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--chds-color-content-high, #29363d)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:block"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+
+    function processItemDetail() {
+        const match = location.pathname.match(/\/item\/[^/]+-(\d+)/);
+        if (!match) return;
+
+        const id = match[1];
+        const carousel = document.querySelector('[role="region"][aria-roledescription="carousel"]');
+        if (!carousel) return;
+
+        // Find the position:relative container that wraps the carousel
+        const container = carousel.closest('section.position-relative');
+        if (!container || container.dataset.hideDetailProcessed === 'true') return;
+
+        // Clone the real favorite button so we inherit its exact classes and look.
+        // It lives inside a WALLA-TOOLTIP in a zero-height DIV, not in the section,
+        // so search globally. If not found yet, retry on the next tick.
+        const favBtn = document.querySelector('button[aria-label="Save as favorite"]');
+        if (!favBtn) return;
+        const btn = favBtn.cloneNode(true);
+
+        btn.removeAttribute('aria-pressed');
+        btn.removeAttribute('slot');
+        btn.setAttribute('aria-label', 'Hide item');
+        btn.title = T.hideBtn;
+
+        // Replace the native heart icon + counter with our eye-off icon (24px, native size)
+        btn.querySelectorAll('span.ms-1').forEach(s => s.remove());
+        const wallaIcon = btn.querySelector('walla-icon');
+        if (wallaIcon) wallaIcon.remove();
+        btn.innerHTML = EYE_OFF_DETAIL;
+
+        // Anchor to top-right, mirroring the favorite's bottom:20px / right:20px
+        btn.style.position = 'absolute';
+        btn.style.top = '20px';
+        btn.style.right = '20px';
+        btn.style.zIndex = '2';
+
+        const hidden = getHidden();
+        if (hidden.includes(id)) block(btn);
+
+        btn.addEventListener('click', e => {
+            e.preventDefault(); e.stopPropagation();
+            const items = getHidden();
+            if (items.includes(id)) {
+                removeHidden(id);
+                console.log(`[wallapop_hide_items] Item ${id} unhidden`);
+                btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
+                btn.title = T.hideBtn;
+            } else {
+                addHidden(id);
+                block(btn);
+                console.log(`[wallapop_hide_items] Item ${id} hidden`);
+            }
+        });
+
+        container.appendChild(btn);
+        container.dataset.hideDetailProcessed = 'true';
+    }
+
     function processCards() {
         if (location.pathname !== lastPath) {
             lastPath = location.pathname;
             allHidden = false; titleModified = false; transient.clear();
+            document.querySelectorAll('[data-hide-detail-processed="true"]')
+                .forEach(el => el.removeAttribute('data-hide-detail-processed'));
             injectStyles();
         }
 
@@ -387,6 +467,7 @@
         syncTransient(hidden, cells, sim);
         injectToggle();
         processLinks(hidden);
+        processItemDetail();
     }
 
     injectStyles();
