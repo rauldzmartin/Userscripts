@@ -241,6 +241,10 @@ No license specified. Personal use script.
 
 ## Changelog
 
+### v1.4.1 (2026-08-13)
+- Fix: duplicated toggle in the sidebar "Reservados" row — the wallapop-toggle is now created fresh instead of cloning the hydrated Stencil component (which re-rendered its template on top of the copied DOM)
+- Existing duplicated rows are detected and replaced automatically
+
 ### v1.4.0 (2026-08-13)
 - New "Reservados" toggle in the sidebar filters (cloned from the native shipping-options toggle): hides reserved items by default, purely via CSS — no sync, no changes to the blocked list
 - Reserved-hiding is independent of "Show hidden": both filters coexist without interfering

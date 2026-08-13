@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.0
+// @version      1.4.1
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -395,40 +395,60 @@
         if (input) input.checked = hideReserved;
     }
 
-    // Clones the "Shipping options" toggle row (wallapop-toggle + title + description)
-    // and rewires it. cloneNode drops event listeners, so we attach our own; the
-    // visual toggle state follows the native :checked sibling in Wallapop's CSS.
+    // Mirrors the "Shipping options" toggle row (wallapop-toggle + title +
+    // description). The row classes/layout are cloned from the native one, but
+    // the wallapop-toggle itself is created fresh: cloning a hydrated Stencil
+    // component and mutating its props makes it re-render its template on top
+    // of the copied DOM, producing duplicated toggles.
     function injectReservedToggle() {
-        if (document.getElementById(RESERVED_ROW_ID)) return;
+        let row = document.getElementById(RESERVED_ROW_ID);
+        if (row) {
+            // Sanitize rows injected by older versions (duplicated toggle containers).
+            let ok = true;
+            row.querySelectorAll('wallapop-toggle').forEach(t => {
+                if (t.querySelectorAll(':scope > .wallapop-toggle__container').length > 1) ok = false;
+            });
+            if (ok) return;
+            row.remove();
+        }
         const src = document.querySelector('[class*="SidebarFilter__container"]:has(wallapop-toggle)');
         if (!src) return;
-        const row = src.cloneNode(true);
+        row = src.cloneNode(true);
         row.id = RESERVED_ROW_ID;
         const title = row.querySelector('[class*="ToggleSidebar__title"]');
         if (title) title.textContent = T.reserved;
         const desc = row.querySelector('.d-flex.flex-column span:not([class])');
         if (desc) desc.textContent = T.reservedDesc;
-        const toggle = row.querySelector('wallapop-toggle'),
-              input = toggle?.querySelector('input');
+        row.querySelector('wallapop-toggle')?.replaceWith(document.createElement('wallapop-toggle'));
+        const toggle = row.querySelector('wallapop-toggle');
         if (toggle) {
-            toggle.removeAttribute('aria-expanded');
             toggle.setAttribute('input-id', RESERVED_INPUT_ID);
             toggle.setAttribute('aria-label', T.reservedDesc);
         }
+        src.after(row);
+    }
+
+    // Wires the fresh wallapop-toggle once its hydration renders the input,
+    // and keeps its checked state in sync every tick.
+    function wireReservedToggle() {
+        const row = document.getElementById(RESERVED_ROW_ID);
+        if (!row) return;
+        const input = row.querySelector('wallapop-toggle input');
         if (input) {
-            input.id = RESERVED_INPUT_ID;
-            input.name = RESERVED_INPUT_ID;
+            if (!input.dataset.wallapopWired) {
+                input.dataset.wallapopWired = '1';
+                input.addEventListener('change', () => { if (input.checked !== hideReserved) toggleReserved(); });
+            }
             input.checked = hideReserved;
-            input.addEventListener('change', () => { if (input.checked !== hideReserved) toggleReserved(); });
         }
         const btn = row.querySelector('.d-flex[role="button"]');
-        if (btn) {
+        if (btn && !btn.dataset.wallapopWired) {
+            btn.dataset.wallapopWired = '1';
             btn.addEventListener('click', toggleReserved);
             btn.addEventListener('keydown', e => {
                 if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleReserved(); }
             });
         }
-        src.after(row);
     }
 
     function syncTransient(hidden, cells, sim, reserved) {
@@ -593,6 +613,7 @@
         syncTransient(hidden, cells, sim, reserved);
         injectToggle();
         injectReservedToggle();
+        wireReservedToggle();
         processLinks(hidden);
         processItemDetail();
     }
