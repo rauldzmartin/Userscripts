@@ -242,6 +242,10 @@ No license specified. Personal use script.
 
 ## Changelog
 
+### v1.5.1 (2026-08-13)
+- **Instant hide/unhide:** the clicked card is shown/hidden immediately via its class, and the stylesheet is updated incrementally (insert/remove one rule per id instead of rebuilding the whole sheet) — with a large hidden list the old full rebuild blocked the UI for hundreds of ms on every click
+- Id-based rules are now emitted one per style rule (same selectors), so incremental add/remove is exact and the full rebuild is reserved for sync/prune/navigation
+
 ### v1.5.0 (2026-08-13)
 - **Event-driven processing:** a MutationObserver schedules card/toggle/title processing (250ms debounce) instead of the fixed 1-second polling; a 5s safety poll guards against missed changes — idle CPU drops ~80%, notably during scroll and on static pages
 - **Button-state updates only on change:** the eye buttons are re-checked only when the hidden list actually changes (localStorage write), never on idle ticks

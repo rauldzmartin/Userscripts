@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.5.0
+// @version      1.5.1
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -39,6 +39,7 @@
           TITLE = '[class*="SearchPageResults__title"] h2',
           SECTION = 'SearchPageResults__title',
           ID_RE = /-(\d+)(?:[/?#]|$)/,
+          ID_RULE_RE = /href\$="-(\d+)"/,
           HIDE = `{position:absolute!important;clip-path:inset(100%)!important;pointer-events:none!important}`,
           ICON_COLOR = 'var(--chds-color-content-high, #29363d)',
           BLOCK_STROKE = 'var(--chds-color-negative-mid, #ce3528)',
@@ -72,6 +73,7 @@
         origTitle = null, titleUrl = '';
     
     const transient = new Set(),
+          ruleMap = new Map(),
           extractId = href => href?.match(ID_RE)?.[1] ?? null,
           cardId = c => extractId(c.querySelector(LINK)?.href),
           getHidden = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }},
@@ -262,31 +264,56 @@
               btn.title = blocked ? T.blocked : T.hideBtn;
           };
 
+    // Boundary-safe: match only the full id (end of href or followed by a
+    // URL separator) so short ids can't false-positive on longer ones.
+    const byIdSel = id => [
+        `a[href$="-${id}"]`, `a[href*="-${id}/"]`, `a[href*="-${id}?"]`, `a[href*="-${id}#"]`
+    ].join(',');
+
+    const idRuleFor = id => `${GRID}>div:has(${byIdSel(id)}),${LIST}>div:has(${byIdSel(id)}),tsl-public-item-card:has(${byIdSel(id)}) ${HIDE}`;
+
+    // Incremental per-id rules: hiding appends one rule (no reparse) and
+    // unhiding removes it after a cheap index walk, so clicks never rebuild
+    // the whole stylesheet (which janked the UI with large hidden lists).
+    function insertIdRule(id) {
+        const s = document.getElementById(STYLES_ID);
+        const sheet = s?.sheet;
+        if (!sheet || ruleMap.has(id)) return;
+        sheet.insertRule(idRuleFor(id), sheet.cssRules.length);
+        ruleMap.set(id, sheet.cssRules.length - 1);
+    }
+
+    function deleteIdRule(id) {
+        const sheet = document.getElementById(STYLES_ID)?.sheet;
+        if (!sheet) return;
+        ruleMap.clear();
+        for (let i = 0; i < sheet.cssRules.length; i++) {
+            const m = sheet.cssRules[i].selectorText?.match(ID_RULE_RE);
+            if (m) ruleMap.set(m[1], i);
+        }
+        const idx = ruleMap.get(id);
+        if (idx === undefined) return;
+        sheet.deleteRule(idx);
+    }
+
     function injectStyles() {
         let s = document.getElementById(STYLES_ID);
         if (!s) { s = document.createElement('style'); s.id = STYLES_ID; (document.head || document.documentElement).appendChild(s); }
         const items = getHidden(),
               rules = [`.${FALLBACK_CLASS} ${HIDE}`];
         if (items.length) {
-            // Boundary-safe: match only the full id (end of href or followed by a
-            // URL separator) so short ids can't false-positive on longer ones.
-            const byId = id => [
-                `a[href$="-${id}"]`, `a[href*="-${id}/"]`, `a[href*="-${id}?"]`, `a[href*="-${id}#"]`
-            ].join(',');
-            const sel = items.flatMap(id => [
-                `${GRID}>div:has(${byId(id)})`, `${LIST}>div:has(${byId(id)})`, `tsl-public-item-card:has(${byId(id)})`
-            ]);
-            rules.push(`${sel.join(',')} ${HIDE}`);
+            for (const id of items) rules.push(idRuleFor(id));
         }
         s.textContent = rules.join('\n');
         s.disabled = disabled;
+        ruleMap.clear();
     }
 
     const addHidden = id => {
         if (!/^\d+$/.test(id)) return;
         const items = getHidden();
         if (!items.includes(id)) {
-            items.push(id); saveHidden(items); injectStyles(); sync.schedule();
+            items.push(id); saveHidden(items); insertIdRule(id); sync.schedule();
             if (items.length > CAP) prune();
         }
     };
@@ -295,7 +322,7 @@
         if (!/^\d+$/.test(id)) return;
         const items = getHidden();
         const idx = items.indexOf(id);
-        if (idx !== -1) { items.splice(idx, 1); saveHidden(items); injectStyles(); sync.schedule(); }
+        if (idx !== -1) { items.splice(idx, 1); saveHidden(items); deleteIdRule(id); sync.schedule(); }
     };
 
     const hideCard = link => { if (!disabled) link.closest('article, tsl-public-item-card')?.parentElement?.classList.add(FALLBACK_CLASS); };
@@ -305,13 +332,14 @@
     const toggleHidden = (id, btn, link) => {
         const items = getHidden();
         if (items.includes(id)) {
-            removeHidden(id); allHidden = false;
+            allHidden = false;
             if (link) showCard(link);
+            removeHidden(id);
             setBlockedState(btn, false);
             console.log(`[wallapop_hide_items] Item ${id} unhidden`);
         } else {
-            addHidden(id);
             if (link) hideCard(link);
+            addHidden(id);
             setBlockedState(btn, true);
             console.log(`[wallapop_hide_items] Item ${id} hidden`);
         }
