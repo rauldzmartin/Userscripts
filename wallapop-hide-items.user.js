@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.3.0
+// @version      1.4.0
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -26,6 +26,12 @@
           FALLBACK_CLASS = 'wallapop-hidden-fallback',
           STYLES_ID = 'wallapop-hide-styles',
           TOGGLE_BTN_ID = 'wallapop-toggle-hidden-btn',
+          RESERVED_KEY = 'wallapop_hide_reserved',
+          RESERVED_CLASS = 'wallapop-hide-reserved',
+          RESERVED_STYLES_ID = 'wallapop-reserved-styles',
+          RESERVED_ROW_ID = 'wallapop-reserved-toggle-row',
+          RESERVED_INPUT_ID = 'wallapop-hide-reserved-input',
+          RESERVED_BADGE = 'wallapop-badge[badge-type="reserved"]',
           GRID = '[class*="ItemCardGrid"]',
           LIST = '[class*="ItemCardList"]',
           LINK = 'a[href*="/item/"]',
@@ -50,14 +56,17 @@
     const T = location.hostname.startsWith('es.') ? {
         hiddenTitle: 'Todos los artículos de esta búsqueda están ocultos. Usa «Mostrar ocultos» para verlos.',
         show: 'Mostrar ocultos', hide: 'Ocultar bloqueados',
-        blocked: 'Este artículo está bloqueado.', hideBtn: 'Ocultar este artículo'
+        blocked: 'Este artículo está bloqueado.', hideBtn: 'Ocultar este artículo',
+        reserved: 'Reservados', reservedDesc: 'Ocultar anuncios reservados'
     } : {
         hiddenTitle: 'All items in this search are hidden. Use "Show hidden" to view them.',
         show: 'Show hidden', hide: 'Hide blocked',
-        blocked: 'This item is blocked.', hideBtn: 'Hide this item'
+        blocked: 'This item is blocked.', hideBtn: 'Hide this item',
+        reserved: 'Reserved', reservedDesc: 'Hide reserved items'
     };
 
     let disabled = (() => { try { return localStorage.getItem(TOGGLE_KEY) === '1'; } catch { return false; }})(),
+        hideReserved = (() => { try { return localStorage.getItem(RESERVED_KEY) !== '0'; } catch { return true; }})(),
         lastPath = location.pathname, titleModified = false, allHidden = false;
     
     const transient = new Set(),
@@ -230,9 +239,9 @@
         return count >= 2 ? new Set(cells.slice(last + 1)) : new Set();
     };
 
-    const computeAll = (cells, hidden, sim) => {
+    const computeAll = (cells, hidden, sim, reserved) => {
         if (disabled) return false;
-        const cards = cells.filter(c => c.querySelector(LINK) && !sim.has(c));
+        const cards = cells.filter(c => c.querySelector(LINK) && !sim.has(c) && !reserved.has(c));
         return cards.length > 0 && cards.every(c => c.classList.contains(FALLBACK_CLASS) || hidden.has(cardId(c)));
     };
 
@@ -366,9 +375,66 @@
         }
     }
 
-    function syncTransient(hidden, cells, sim) {
+    function injectReservedStyles() {
+        let s = document.getElementById(RESERVED_STYLES_ID);
+        if (!s) { s = document.createElement('style'); s.id = RESERVED_STYLES_ID; (document.head || document.documentElement).appendChild(s); }
+        s.textContent = [
+            `html.${RESERVED_CLASS} ${GRID}>div:has(${RESERVED_BADGE})`,
+            `html.${RESERVED_CLASS} ${LIST}>div:has(${RESERVED_BADGE})`,
+            `html.${RESERVED_CLASS} tsl-public-item-card:has(${RESERVED_BADGE})`
+        ].join(',') + ` ${HIDE}`;
+        s.disabled = false;
+    }
+
+    function toggleReserved() {
+        hideReserved = !hideReserved;
+        console.log(`[wallapop_hide_items] ${hideReserved ? 'Hiding' : 'Showing'} reserved items`);
+        try { localStorage.setItem(RESERVED_KEY, hideReserved ? '1' : '0'); } catch {}
+        document.documentElement.classList.toggle(RESERVED_CLASS, hideReserved);
+        const input = document.getElementById(RESERVED_INPUT_ID);
+        if (input) input.checked = hideReserved;
+    }
+
+    // Clones the "Shipping options" toggle row (wallapop-toggle + title + description)
+    // and rewires it. cloneNode drops event listeners, so we attach our own; the
+    // visual toggle state follows the native :checked sibling in Wallapop's CSS.
+    function injectReservedToggle() {
+        if (document.getElementById(RESERVED_ROW_ID)) return;
+        const src = document.querySelector('[class*="SidebarFilter__container"]:has(wallapop-toggle)');
+        if (!src) return;
+        const row = src.cloneNode(true);
+        row.id = RESERVED_ROW_ID;
+        const title = row.querySelector('[class*="ToggleSidebar__title"]');
+        if (title) title.textContent = T.reserved;
+        const desc = row.querySelector('.d-flex.flex-column span:not([class])');
+        if (desc) desc.textContent = T.reservedDesc;
+        const toggle = row.querySelector('wallapop-toggle'),
+              input = toggle?.querySelector('input');
+        if (toggle) {
+            toggle.removeAttribute('aria-expanded');
+            toggle.setAttribute('input-id', RESERVED_INPUT_ID);
+            toggle.setAttribute('aria-label', T.reservedDesc);
+        }
+        if (input) {
+            input.id = RESERVED_INPUT_ID;
+            input.name = RESERVED_INPUT_ID;
+            input.checked = hideReserved;
+            input.addEventListener('change', () => { if (input.checked !== hideReserved) toggleReserved(); });
+        }
+        const btn = row.querySelector('.d-flex[role="button"]');
+        if (btn) {
+            btn.addEventListener('click', toggleReserved);
+            btn.addEventListener('keydown', e => {
+                if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleReserved(); }
+            });
+        }
+        src.after(row);
+    }
+
+    function syncTransient(hidden, cells, sim, reserved) {
         const tr = allHidden && !disabled;
         cells.forEach(cell => {
+            if (reserved.has(cell)) return;
             const id = cardId(cell);
             if (!id) return;
             const fb = cell.classList.contains(FALLBACK_CLASS);
@@ -503,6 +569,8 @@
         if (location.pathname.includes('/app/favorites')) {
             const s = document.getElementById(STYLES_ID);
             if (s && !s.disabled) s.disabled = true;
+            const rs = document.getElementById(RESERVED_STYLES_ID);
+            if (rs && !rs.disabled) rs.disabled = true;
             return;
         }
 
@@ -512,20 +580,25 @@
             document.querySelectorAll('[data-hide-detail-processed="true"]')
                 .forEach(el => el.removeAttribute('data-hide-detail-processed'));
             injectStyles();
+            injectReservedStyles();
         }
 
         const hidden = new Set(getHidden()),
               cells = gridCells(),
-              sim = similares(cells);
+              sim = similares(cells),
+              reserved = new Set(cells.filter(c => c.querySelector(RESERVED_BADGE)));
         cells.forEach(c => { const id = cardId(c); if (id && hidden.has(id)) markSeen(id); });
-        if (computeAll(cells, hidden, sim)) allHidden = true;
+        if (computeAll(cells, hidden, sim, reserved)) allHidden = true;
         syncTitle();
-        syncTransient(hidden, cells, sim);
+        syncTransient(hidden, cells, sim, reserved);
         injectToggle();
+        injectReservedToggle();
         processLinks(hidden);
         processItemDetail();
     }
 
+    document.documentElement.classList.toggle(RESERVED_CLASS, hideReserved);
+    injectReservedStyles();
     injectStyles();
     prune();
     sync.init();

@@ -7,6 +7,7 @@ Multi-device synchronized userscript for hiding items in Wallapop search results
 - Hide specific items from Wallapop search results
 - Multi-device synchronization via GitHub Gist
 - Toggle visibility of hidden items
+- Hide reserved items by default (toggle in the sidebar filters)
 - Automatic detection of "all hidden" state
 - Offline-first with localStorage fallback
 - Observation-based pruning of stale items (60 days unseen; hard cap of 5,000)
@@ -80,6 +81,15 @@ To change Gist ID or Token:
 
 Click the "Show hidden" / "Mostrar ocultos" button in the search filters to temporarily display hidden items.
 
+### Hide Reserved Items
+
+Reserved items (announcements with the "Reservado" badge, i.e. sales already in progress) are hidden by default. A toggle row is injected into the sidebar filters (cloned from the native "Shipping options" toggle, placed right next to it) with the label "Reservados" / "Reserved" — toggle it off to show reserved items again.
+
+- The setting is per-device (`wallapop_hide_reserved` in localStorage, default `1` = hidden)
+- It is CSS-only and ephemeral: reserved items are *not* added to the synced blocked list and are *not* shared with other devices
+- Reserved items stay hidden even while "Show hidden" is active (both filters are independent)
+- Cards hidden this way are excluded from the "all hidden" title detection, so a page whose only remaining cards are reserved shows a normal title, not "everything is hidden"
+
 ### Favorites Page
 
 The script is automatically disabled on `/app/favorites/*`, both on direct load and during SPA navigation into favorites. Hidden items therefore remain visible in your favorites grid; hiding resumes when you navigate back to search results.
@@ -121,6 +131,8 @@ Device B: (30s later)
   - Format: `{"123": 1730000000000}` — hide timestamps (eviction ordering)
   - Key: `wallapop_last_seen`
   - Format: `{"123": 20418}` — last day the item was seen in search results (observation-based eviction, local-only)
+  - Key: `wallapop_hide_reserved`
+  - Format: `'1'` or `'0'` — reserved-items filter state (default `'1'`, hidden by default; local-only)
 
 - **Tampermonkey Storage:** Configuration persistence
   - Key: `wallapop_gist_cfg`
@@ -163,7 +175,7 @@ Device B: (30s later)
 
 ## Performance
 
-- **Script size:** ~320 lines (~12KB uncompressed)
+- **Script size:** ~610 lines (~29KB uncompressed)
 - **Memory footprint:** Minimal (arrays of item IDs only)
 - **Network:** 2 requests per minute max (1 fetch + potential push)
 - **UI impact:** Non-blocking (async operations)
@@ -172,6 +184,7 @@ Device B: (30s later)
 
 - **Unblock sync:** Unhiding an item propagates to all devices (last-writer-wins, with pending local changes re-applied)
 - **Bounded retention:** Items not seen in your searches for 60+ days are pruned (long-lived listings stay hidden while they keep appearing). A pruned item that is still active may reappear once — re-hide it with one click
+- **Reserved filter is local:** Hiding reserved items is a per-device, CSS-only filter; it does not sync to the Gist and it is not applied on the favorites page
 - **Token security:** GitHub token grants access to all your Gists (use dedicated account if concerned)
 - **Rate limits:** 5000 requests/hour per token (sufficient for normal usage)
 - **Sync delay:** Up to 32 seconds (2s debounce + 30s interval)
@@ -227,6 +240,12 @@ Hosted at: https://github.com/rauldzmartin/Userscripts
 No license specified. Personal use script.
 
 ## Changelog
+
+### v1.4.0 (2026-08-13)
+- New "Reservados" toggle in the sidebar filters (cloned from the native shipping-options toggle): hides reserved items by default, purely via CSS — no sync, no changes to the blocked list
+- Reserved-hiding is independent of "Show hidden": both filters coexist without interfering
+- Cards hidden by the reserved filter no longer trigger the "all hidden" title detection (their hiding is deliberate, not an empty result)
+- New local storage key: `wallapop_hide_reserved` (`'1'` = hidden, default; `'0'` = show)
 
 ### v1.3.0 (2026-08-13)
 - Observation-based retention: items not seen in your searches for 60 days are pruned automatically; long-lived listings are kept while they keep appearing
