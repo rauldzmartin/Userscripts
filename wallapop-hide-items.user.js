@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.2
+// @version      1.5.0
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
 // @exclude      https://*.wallapop.com/app/favorites/*
+// @noframes
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=wallapop.com
 // @run-at       document-start
 // @grant        GM_getValue
@@ -39,16 +40,16 @@
           SECTION = 'SearchPageResults__title',
           ID_RE = /-(\d+)(?:[/?#]|$)/,
           HIDE = `{position:absolute!important;clip-path:inset(100%)!important;pointer-events:none!important}`,
-          EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--chds-color-content-high, #29363d)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="margin:auto;display:block"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
+          ICON_COLOR = 'var(--chds-color-content-high, #29363d)',
           BLOCK_STROKE = 'var(--chds-color-negative-mid, #ce3528)',
           SYNC_INTERVAL = 30000, WRITE_DEBOUNCE = 2000,
+          MUTATION_DELAY = 250, POLL_INTERVAL = 5000,
           GIST_CFG = 'wallapop_gist_cfg', GIST_FILE = 'wallapop-blocked-items.json',
           LAST_SYNCED_KEY = 'wallapop_last_synced_state', GIST_PROMPTED_KEY = 'wallapop_gist_prompted',
           TS_KEY = 'wallapop_hidden_ts', SEEN_KEY = 'wallapop_last_seen',
           CAP = 5000, MIN_KEEP = 50, SEEN_WINDOW = 60 * 86400000, DAY = 86400000;
 
-    let pushTimer = null, syncQueue = Promise.resolve(), lastSyncedIds = null;
-    try { lastSyncedIds = JSON.parse(localStorage.getItem(LAST_SYNCED_KEY) || 'null'); } catch {}
+    let cardsTimer = null, stateDirty = false;
     let tsMap = {}, seenMap = {}, seenDirty = false;
     try { tsMap = JSON.parse(localStorage.getItem(TS_KEY) || '{}'); } catch {}
     try { seenMap = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}'); } catch {}
@@ -88,8 +89,8 @@
               for (const id of Object.keys(seenMap)) if (!set.has(id)) { delete seenMap[id]; seenDirty = true; }
               persistTs();
           },
-          saveHidden = ids => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {} reconcileMeta(ids); },
-          persistSynced = () => { try { localStorage.setItem(LAST_SYNCED_KEY, JSON.stringify(lastSyncedIds)); } catch {} },
+          saveHidden = ids => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {} reconcileMeta(ids); stateDirty = true; },
+          persistSynced = () => { try { localStorage.setItem(LAST_SYNCED_KEY, JSON.stringify(sync.lastSyncedIds)); } catch {} },
           parseGist = r => {
               try {
                   const data = JSON.parse(r.responseText);
@@ -100,13 +101,12 @@
                   return { blocked: sanitize(parsed.blocked) };
               } catch { return null; }
           },
-          applyRemote = (remote, current) => {
-              if (lastSyncedIds === null) return [...new Set([...current, ...remote])];
-              const prevSet = new Set(lastSyncedIds), curSet = new Set(current),
-                    removed = new Set(lastSyncedIds.filter(id => !curSet.has(id)));
+          applyRemote = (remote, current, prev) => {
+              if (prev === null) return [...new Set([...current, ...remote])];
+              const prevSet = new Set(prev), curSet = new Set(current),
+                    removed = new Set(prev.filter(id => !curSet.has(id)));
               return [...new Set([...remote, ...current.filter(id => !prevSet.has(id))])].filter(id => !removed.has(id));
           },
-          serial = fn => { const run = syncQueue.then(fn); syncQueue = run.catch(() => {}); return run; },
           markSeen = id => {
               const d = Math.floor(Date.now() / DAY);
               if (seenMap[id] === d) return;
@@ -146,7 +146,15 @@
         });
     });
 
-    const sync = {
+    class GistSync {
+        constructor() {
+            this.pushTimer = null;
+            this.queue = Promise.resolve();
+            try { this.lastSyncedIds = JSON.parse(localStorage.getItem(LAST_SYNCED_KEY) || 'null'); } catch { this.lastSyncedIds = null; }
+        }
+
+        serial(fn) { const run = this.queue.then(fn); this.queue = run.catch(() => {}); return run; }
+
         cfg() {
             const conf = GM_getValue(GIST_CFG);
             if (conf) return conf;
@@ -159,43 +167,43 @@
             const conf2 = {id: id.trim(), token: token.trim()};
             GM_setValue(GIST_CFG, conf2);
             return conf2;
-        },
+        }
 
         fetch() {
             const conf = this.cfg();
             if (!conf) return;
-            serial(() => req('GET', `gists/${conf.id}`)
+            this.serial(() => req('GET', `gists/${conf.id}`)
                 .then(r => {
                     const remote = parseGist(r);
-                    if (!remote || equal(remote.blocked, lastSyncedIds)) return;
+                    if (!remote || equal(remote.blocked, this.lastSyncedIds)) return;
                     const current = getHidden();
-                    const merged = applyRemote(remote.blocked, current);
+                    const merged = applyRemote(remote.blocked, current, this.lastSyncedIds);
                     if (!equal(merged, current)) {
                         saveHidden(merged);
                         injectStyles();
                         console.log(`[wallapop_hide_items] Synced ${merged.length} items from Gist`);
                     }
-                    lastSyncedIds = remote.blocked;
+                    this.lastSyncedIds = remote.blocked;
                     persistSynced();
                     if (!equal(merged, remote.blocked)) this.schedule();
                 })
                 .catch(e => console.warn('[wallapop_hide_items] Fetch failed:', e.status || e)));
-        },
+        }
 
         push() {
             const conf = this.cfg();
             if (!conf) return;
-            serial(() => req('GET', `gists/${conf.id}`)
+            this.serial(() => req('GET', `gists/${conf.id}`)
                 .then(r => {
                     const remote = parseGist(r);
-                    if (remote && !equal(remote.blocked, lastSyncedIds)) {
+                    if (remote && !equal(remote.blocked, this.lastSyncedIds)) {
                         const current = getHidden();
-                        const merged = applyRemote(remote.blocked, current);
+                        const merged = applyRemote(remote.blocked, current, this.lastSyncedIds);
                         if (!equal(merged, current)) {
                             saveHidden(merged);
                             injectStyles();
                         }
-                        lastSyncedIds = remote.blocked;
+                        this.lastSyncedIds = remote.blocked;
                         persistSynced();
                         if (equal(getHidden(), remote.blocked)) return null;
                     }
@@ -213,7 +221,7 @@
                         }
                     });
                     return req('PATCH', `gists/${conf.id}`, payload).then(() => {
-                        lastSyncedIds = local;
+                        this.lastSyncedIds = local;
                         persistSynced();
                         console.log(`[wallapop_hide_items] Pushed ${local.length} items to Gist`);
                     });
@@ -222,17 +230,19 @@
                     if (e.status === 429) setTimeout(() => this.push(), 60000);
                     else console.warn('[wallapop_hide_items] Push failed:', e.status || e);
                 }));
-        },
+        }
 
         schedule() {
-            clearTimeout(pushTimer);
-            pushTimer = setTimeout(() => this.push(), WRITE_DEBOUNCE);
-        },
+            clearTimeout(this.pushTimer);
+            this.pushTimer = setTimeout(() => this.push(), WRITE_DEBOUNCE);
+        }
 
         init() {
             if (this.cfg()) this.fetch();
         }
-    };
+    }
+
+    const sync = new GistSync();
 
     const similares = cells => {
         let last = -1, count = 0;
@@ -246,7 +256,11 @@
         return cards.length > 0 && cards.every(c => c.classList.contains(FALLBACK_CLASS) || hidden.has(cardId(c)));
     };
 
-    const block = (btn, blocked = true) => { btn.querySelector('svg')?.setAttribute('stroke', BLOCK_STROKE); if (blocked) btn.title = T.blocked; };
+    const eyeIcon = (size = 16, center = true) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${ICON_COLOR}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="${center ? 'margin:auto;' : ''}display:block"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
+          setBlockedState = (btn, blocked) => {
+              btn.querySelector('svg')?.setAttribute('stroke', blocked ? BLOCK_STROKE : ICON_COLOR);
+              btn.title = blocked ? T.blocked : T.hideBtn;
+          };
 
     function injectStyles() {
         let s = document.getElementById(STYLES_ID);
@@ -288,6 +302,21 @@
 
     const showCard = link => { link.closest('article, tsl-public-item-card')?.parentElement?.classList.remove(FALLBACK_CLASS); };
 
+    const toggleHidden = (id, btn, link) => {
+        const items = getHidden();
+        if (items.includes(id)) {
+            removeHidden(id); allHidden = false;
+            if (link) showCard(link);
+            setBlockedState(btn, false);
+            console.log(`[wallapop_hide_items] Item ${id} unhidden`);
+        } else {
+            addHidden(id);
+            if (link) hideCard(link);
+            setBlockedState(btn, true);
+            console.log(`[wallapop_hide_items] Item ${id} hidden`);
+        }
+    };
+
     const btnText = () => disabled ? T.hide : T.show;
 
     function updateButtonsState() {
@@ -300,10 +329,9 @@
             const id = extractId(link.href);
             if (!id) return;
             if (hidden.has(id)) {
-                block(btn);
+                setBlockedState(btn, true);
             } else {
-                btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
-                btn.title = T.hideBtn;
+                setBlockedState(btn, false);
             }
         });
 
@@ -315,12 +343,7 @@
                 const match = location.pathname.match(/\/item\/[^/]+-(\d+)/);
                 if (match) {
                     const id = match[1];
-                    if (hidden.has(id)) {
-                        block(detailBtn);
-                    } else {
-                        detailBtn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
-                        detailBtn.title = T.hideBtn;
-                    }
+                    setBlockedState(detailBtn, hidden.has(id));
                 }
             }
         }
@@ -497,21 +520,12 @@
             btn.setAttribute('aria-label', 'Hide item');
             btn.title = T.hideBtn;
             Object.assign(btn.style, { width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0' });
-            btn.innerHTML = EYE_OFF;
+            btn.innerHTML = eyeIcon();
 
-            if (hidden.has(id)) block(btn);
+            if (hidden.has(id)) setBlockedState(btn, true);
             btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
-                const items = getHidden();
-                if (items.includes(id)) {
-                    removeHidden(id); showCard(link); allHidden = false;
-                    console.log(`[wallapop_hide_items] Item ${id} unhidden`);
-                    btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
-                    btn.title = T.hideBtn;
-                } else {
-                    addHidden(id); hideCard(link); block(btn);
-                    console.log(`[wallapop_hide_items] Item ${id} hidden`);
-                }
+                toggleHidden(id, btn, link);
             });
 
             let host = btn;
@@ -532,8 +546,6 @@
             inner.dataset.hideProcessed = 'true';
         });
     }
-
-    const EYE_OFF_DETAIL = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--chds-color-content-high, #29363d)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:block"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
 
     function processItemDetail() {
         const match = location.pathname.match(/\/item\/[^/]+-(\d+)/);
@@ -563,7 +575,7 @@
         btn.querySelectorAll('span.ms-1').forEach(s => s.remove());
         const wallaIcon = btn.querySelector('walla-icon');
         if (wallaIcon) wallaIcon.remove();
-        btn.innerHTML = EYE_OFF_DETAIL;
+        btn.innerHTML = eyeIcon(24, false);
 
         // Anchor to top-right, mirroring the favorite's bottom:20px / right:20px
         btn.style.position = 'absolute';
@@ -572,21 +584,11 @@
         btn.style.zIndex = '2';
 
         const hidden = getHidden();
-        if (hidden.includes(id)) block(btn);
+        if (hidden.includes(id)) setBlockedState(btn, true);
 
         btn.addEventListener('click', e => {
             e.preventDefault(); e.stopPropagation();
-            const items = getHidden();
-            if (items.includes(id)) {
-                removeHidden(id); allHidden = false;
-                console.log(`[wallapop_hide_items] Item ${id} unhidden`);
-                btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
-                btn.title = T.hideBtn;
-            } else {
-                addHidden(id);
-                block(btn);
-                console.log(`[wallapop_hide_items] Item ${id} hidden`);
-            }
+            toggleHidden(id, btn);
         });
 
         container.appendChild(btn);
@@ -617,6 +619,7 @@
               reserved = new Set(cells.filter(c => c.querySelector(RESERVED_BADGE)));
         cells.forEach(c => { const id = cardId(c); if (id && hidden.has(id)) markSeen(id); });
         if (computeAll(cells, hidden, sim, reserved)) allHidden = true;
+        if (stateDirty) { stateDirty = false; updateButtonsState(); }
         syncTitle();
         syncTransient(hidden, cells, sim, reserved);
         injectToggle();
@@ -626,12 +629,18 @@
         processItemDetail();
     }
 
+    function scheduleCards() {
+        if (cardsTimer) return;
+        cardsTimer = setTimeout(() => { cardsTimer = null; processCards(); }, MUTATION_DELAY);
+    }
+
     document.documentElement.classList.toggle(RESERVED_CLASS, hideReserved);
     injectReservedStyles();
     injectStyles();
     prune();
     sync.init();
-    setInterval(processCards, 1000);
+    new MutationObserver(scheduleCards).observe(document.documentElement, { childList: true, subtree: true });
+    setInterval(processCards, POLL_INTERVAL);
     setInterval(() => sync.fetch(), SYNC_INTERVAL);
     setInterval(persistSeen, 30000);
     setInterval(prune, DAY);

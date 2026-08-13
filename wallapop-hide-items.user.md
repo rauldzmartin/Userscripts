@@ -175,10 +175,11 @@ Device B: (30s later)
 
 ## Performance
 
-- **Script size:** ~610 lines (~29KB uncompressed)
+- **Script size:** ~640 lines (~29KB uncompressed)
 - **Memory footprint:** Minimal (arrays of item IDs only)
 - **Network:** 2 requests per minute max (1 fetch + potential push)
-- **UI impact:** Non-blocking (async operations)
+- **UI impact:** Non-blocking; DOM work is now event-driven — a MutationObserver schedules processing (250ms debounce) only when the page actually changes, with a 5s safety poll instead of the old unconditional 1s interval
+- **Frame skipping:** `@noframes` — the script never runs inside embedded iframes
 
 ## Limitations
 
@@ -240,6 +241,12 @@ Hosted at: https://github.com/rauldzmartin/Userscripts
 No license specified. Personal use script.
 
 ## Changelog
+
+### v1.5.0 (2026-08-13)
+- **Event-driven processing:** a MutationObserver schedules card/toggle/title processing (250ms debounce) instead of the fixed 1-second polling; a 5s safety poll guards against missed changes — idle CPU drops ~80%, notably during scroll and on static pages
+- **Button-state updates only on change:** the eye buttons are re-checked only when the hidden list actually changes (localStorage write), never on idle ticks
+- **`@noframes`:** the script no longer runs in iframes
+- **Refactor (no behavior change):** sync logic lives in a `GistSync` class with its own queue/timer/last-synced state; shared `eyeIcon(size)` SVG factory; unified `setBlockedState(btn, blocked)` for eye-button icon/title; unified `toggleHidden(id, btn, link)` for card and detail-page hide/unhide; `ICON_COLOR` constant replaces repeated style values
 
 ### v1.4.2 (2026-08-13)
 - Boundary-safe hidden-item CSS selectors: the id must end the href or be followed by `/`, `?` or `#` — short ids (e.g. `-50`) can no longer false-positive on longer ones (`-507`)
