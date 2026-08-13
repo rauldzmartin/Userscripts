@@ -9,6 +9,7 @@ Multi-device synchronized userscript for hiding items in Wallapop search results
 - Toggle visibility of hidden items
 - Automatic detection of "all hidden" state
 - Offline-first with localStorage fallback
+- Observation-based pruning of stale items (60 days unseen; hard cap of 5,000)
 - Auto-update from GitHub repository
 
 ## Installation
@@ -116,6 +117,10 @@ Device B: (30s later)
   - Format: `["123456789", "987654321", ...]`
   - Key: `wallapop_last_synced_state`
   - Format: snapshot of the hidden list at the last successful sync (used to compute pending local changes)
+  - Key: `wallapop_hidden_ts`
+  - Format: `{"123": 1730000000000}` — hide timestamps (eviction ordering)
+  - Key: `wallapop_last_seen`
+  - Format: `{"123": 20418}` — last day the item was seen in search results (observation-based eviction, local-only)
 
 - **Tampermonkey Storage:** Configuration persistence
   - Key: `wallapop_gist_cfg`
@@ -166,6 +171,7 @@ Device B: (30s later)
 ## Limitations
 
 - **Unblock sync:** Unhiding an item propagates to all devices (last-writer-wins, with pending local changes re-applied)
+- **Bounded retention:** Items not seen in your searches for 60+ days are pruned (long-lived listings stay hidden while they keep appearing). A pruned item that is still active may reappear once — re-hide it with one click
 - **Token security:** GitHub token grants access to all your Gists (use dedicated account if concerned)
 - **Rate limits:** 5000 requests/hour per token (sufficient for normal usage)
 - **Sync delay:** Up to 32 seconds (2s debounce + 30s interval)
@@ -221,6 +227,12 @@ Hosted at: https://github.com/rauldzmartin/Userscripts
 No license specified. Personal use script.
 
 ## Changelog
+
+### v1.3.0 (2026-08-13)
+- Observation-based retention: items not seen in your searches for 60 days are pruned automatically; long-lived listings are kept while they keep appearing
+- Hard cap of 5,000 hidden items and a safety floor of 50 (bounded CSS, storage and sync payloads)
+- Hide timestamps (`wallapop_hidden_ts`) and last-seen tracking (`wallapop_last_seen`) stored locally; Gist wire format unchanged and compatible with v1.2.0
+- Migration-free upgrade
 
 ### v1.2.0 (2026-08-13)
 - Sync rewritten: last-writer-wins with content-based comparison (no dependency on device clocks)

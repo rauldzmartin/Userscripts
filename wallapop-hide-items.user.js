@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.3.0
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -37,10 +37,15 @@
           BLOCK_STROKE = 'var(--chds-color-negative-mid, #ce3528)',
           SYNC_INTERVAL = 30000, WRITE_DEBOUNCE = 2000,
           GIST_CFG = 'wallapop_gist_cfg', GIST_FILE = 'wallapop-blocked-items.json',
-          LAST_SYNCED_KEY = 'wallapop_last_synced_state', GIST_PROMPTED_KEY = 'wallapop_gist_prompted';
+          LAST_SYNCED_KEY = 'wallapop_last_synced_state', GIST_PROMPTED_KEY = 'wallapop_gist_prompted',
+          TS_KEY = 'wallapop_hidden_ts', SEEN_KEY = 'wallapop_last_seen',
+          CAP = 5000, MIN_KEEP = 50, SEEN_WINDOW = 60 * 86400000, DAY = 86400000;
 
     let pushTimer = null, syncQueue = Promise.resolve(), lastSyncedIds = null;
     try { lastSyncedIds = JSON.parse(localStorage.getItem(LAST_SYNCED_KEY) || 'null'); } catch {}
+    let tsMap = {}, seenMap = {}, seenDirty = false;
+    try { tsMap = JSON.parse(localStorage.getItem(TS_KEY) || '{}'); } catch {}
+    try { seenMap = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}'); } catch {}
 
     const T = location.hostname.startsWith('es.') ? {
         hiddenTitle: 'Todos los artículos de esta búsqueda están ocultos. Usa «Mostrar ocultos» para verlos.',
@@ -64,7 +69,16 @@
     const key = arr => JSON.stringify([...(arr || [])].sort()),
           equal = (a, b) => key(a) === key(b),
           sanitize = arr => (Array.isArray(arr) ? arr : []).map(String).filter(x => /^\d+$/.test(x)),
-          saveHidden = ids => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {} },
+          persistTs = () => { try { localStorage.setItem(TS_KEY, JSON.stringify(tsMap)); } catch {} },
+          persistSeen = () => { if (seenDirty) { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seenMap)); } catch {} seenDirty = false; } },
+          reconcileMeta = ids => {
+              const set = new Set(ids), now = Date.now();
+              ids.forEach(id => { if (!tsMap[id]) tsMap[id] = now; });
+              for (const id of Object.keys(tsMap)) if (!set.has(id)) delete tsMap[id];
+              for (const id of Object.keys(seenMap)) if (!set.has(id)) { delete seenMap[id]; seenDirty = true; }
+              persistTs();
+          },
+          saveHidden = ids => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {} reconcileMeta(ids); },
           persistSynced = () => { try { localStorage.setItem(LAST_SYNCED_KEY, JSON.stringify(lastSyncedIds)); } catch {} },
           parseGist = r => {
               try {
@@ -82,7 +96,29 @@
                     removed = new Set(lastSyncedIds.filter(id => !curSet.has(id)));
               return [...new Set([...remote, ...current.filter(id => !prevSet.has(id))])].filter(id => !removed.has(id));
           },
-          serial = fn => { const run = syncQueue.then(fn); syncQueue = run.catch(() => {}); return run; };
+          serial = fn => { const run = syncQueue.then(fn); syncQueue = run.catch(() => {}); return run; },
+          markSeen = id => {
+              const d = Math.floor(Date.now() / DAY);
+              if (seenMap[id] === d) return;
+              seenMap[id] = d; seenDirty = true;
+          },
+          prune = () => {
+              const list = getHidden();
+              if (!list.length) return;
+              const now = Date.now(), remove = new Set();
+              const ref = id => Math.max((seenMap[id] || 0) * DAY, tsMap[id] || 0);
+              for (const id of list) if (now - ref(id) > SEEN_WINDOW && list.length - remove.size > MIN_KEEP) remove.add(id);
+              if (list.length - remove.size > CAP) {
+                  const byRef = list.filter(id => !remove.has(id)).sort((a, b) => ref(a) - ref(b));
+                  for (const id of byRef) { if (list.length - remove.size <= CAP) break; remove.add(id); }
+              }
+              if (remove.size) {
+                  saveHidden(list.filter(id => !remove.has(id)));
+                  injectStyles();
+                  console.log(`[wallapop_hide_items] Pruned ${remove.size} stale items (${list.length - remove.size} remaining)`);
+              }
+              persistSeen();
+          };
 
     const req = (method, path, data) => new Promise((ok, err) => {
         const cfg = GM_getValue(GIST_CFG);
@@ -220,7 +256,10 @@
     const addHidden = id => {
         if (!/^\d+$/.test(id)) return;
         const items = getHidden();
-        if (!items.includes(id)) { items.push(id); saveHidden(items); injectStyles(); sync.schedule(); }
+        if (!items.includes(id)) {
+            items.push(id); saveHidden(items); injectStyles(); sync.schedule();
+            if (items.length > CAP) prune();
+        }
     };
 
     const removeHidden = id => {
@@ -478,6 +517,7 @@
         const hidden = new Set(getHidden()),
               cells = gridCells(),
               sim = similares(cells);
+        cells.forEach(c => { const id = cardId(c); if (id && hidden.has(id)) markSeen(id); });
         if (computeAll(cells, hidden, sim)) allHidden = true;
         syncTitle();
         syncTransient(hidden, cells, sim);
@@ -487,7 +527,10 @@
     }
 
     injectStyles();
+    prune();
     sync.init();
     setInterval(processCards, 1000);
     setInterval(() => sync.fetch(), SYNC_INTERVAL);
+    setInterval(persistSeen, 30000);
+    setInterval(prune, DAY);
 })();
