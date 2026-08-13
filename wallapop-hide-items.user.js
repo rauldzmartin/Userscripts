@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.4
+// @version      1.2.0
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -37,9 +37,10 @@
           BLOCK_STROKE = 'var(--chds-color-negative-mid, #ce3528)',
           SYNC_INTERVAL = 30000, WRITE_DEBOUNCE = 2000,
           GIST_CFG = 'wallapop_gist_cfg', GIST_FILE = 'wallapop-blocked-items.json',
-          LAST_SYNC_KEY = 'wallapop_last_sync';
+          LAST_SYNCED_KEY = 'wallapop_last_synced_state', GIST_PROMPTED_KEY = 'wallapop_gist_prompted';
 
-    let pushTimer = null, syncing = false, lastRemoteTimestamp = null;
+    let pushTimer = null, syncQueue = Promise.resolve(), lastSyncedIds = null;
+    try { lastSyncedIds = JSON.parse(localStorage.getItem(LAST_SYNCED_KEY) || 'null'); } catch {}
 
     const T = location.hostname.startsWith('es.') ? {
         hiddenTitle: 'Todos los artículos de esta búsqueda están ocultos. Usa «Mostrar ocultos» para verlos.',
@@ -54,14 +55,34 @@
     let disabled = (() => { try { return localStorage.getItem(TOGGLE_KEY) === '1'; } catch { return false; }})(),
         lastPath = location.pathname, titleModified = false, allHidden = false;
     
-    // Cargar último timestamp conocido
-    try { lastRemoteTimestamp = localStorage.getItem(LAST_SYNC_KEY); } catch {}
-    
     const transient = new Set(),
           extractId = href => href?.match(ID_RE)?.[1] ?? null,
           cardId = c => extractId(c.querySelector(LINK)?.href),
           getHidden = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }},
           gridCells = () => [...document.querySelectorAll(`${GRID}>div`)];
+
+    const key = arr => JSON.stringify([...(arr || [])].sort()),
+          equal = (a, b) => key(a) === key(b),
+          sanitize = arr => (Array.isArray(arr) ? arr : []).map(String).filter(x => /^\d+$/.test(x)),
+          saveHidden = ids => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch {} },
+          persistSynced = () => { try { localStorage.setItem(LAST_SYNCED_KEY, JSON.stringify(lastSyncedIds)); } catch {} },
+          parseGist = r => {
+              try {
+                  const data = JSON.parse(r.responseText);
+                  const content = data.files?.[GIST_FILE]?.content;
+                  if (!content) return null;
+                  const parsed = JSON.parse(content);
+                  if (!Array.isArray(parsed.blocked)) return null;
+                  return { blocked: sanitize(parsed.blocked) };
+              } catch { return null; }
+          },
+          applyRemote = (remote, current) => {
+              if (lastSyncedIds === null) return [...new Set([...current, ...remote])];
+              const prevSet = new Set(lastSyncedIds), curSet = new Set(current),
+                    removed = new Set(lastSyncedIds.filter(id => !curSet.has(id)));
+              return [...new Set([...remote, ...current.filter(id => !prevSet.has(id))])].filter(id => !removed.has(id));
+          },
+          serial = fn => { const run = syncQueue.then(fn); syncQueue = run.catch(() => {}); return run; };
 
     const req = (method, path, data) => new Promise((ok, err) => {
         const cfg = GM_getValue(GIST_CFG);
@@ -81,93 +102,80 @@
 
     const sync = {
         cfg() {
-            let c = GM_getValue(GIST_CFG);
-            if (!c) {
-                const id = prompt('GitHub Gist ID:\n\nExample: 95636bead4acf24062071058dcf9ea14');
-                if (!id) return null;
-                const token = prompt('GitHub Personal Access Token:\n\nGenerate at: Settings → Developer Settings → Tokens\nScope: gist');
-                if (!token) return null;
-                c = {id: id.trim(), token: token.trim()};
-                GM_setValue(GIST_CFG, c);
-            }
-            return c;
+            const conf = GM_getValue(GIST_CFG);
+            if (conf) return conf;
+            if (GM_getValue(GIST_PROMPTED_KEY)) return null;
+            GM_setValue(GIST_PROMPTED_KEY, 1);
+            const id = prompt('GitHub Gist ID:\n\nExample: 95636bead4acf24062071058dcf9ea14');
+            if (!id) return null;
+            const token = prompt('GitHub Personal Access Token:\n\nGenerate at: Settings → Developer Settings → Tokens\nScope: gist');
+            if (!token) return null;
+            const conf2 = {id: id.trim(), token: token.trim()};
+            GM_setValue(GIST_CFG, conf2);
+            return conf2;
         },
 
         fetch() {
-            if (syncing || !this.cfg()) return;
-            syncing = true;
-            req('GET', `gists/${this.cfg().id}`)
+            const conf = this.cfg();
+            if (!conf) return;
+            serial(() => req('GET', `gists/${conf.id}`)
                 .then(r => {
-                    const content = JSON.parse(r.responseText).files[GIST_FILE]?.content;
-                    if (!content) return;
-                    const remoteData = JSON.parse(content);
-                    const remote = remoteData.blocked || [];
-                    const remoteTimestamp = remoteData.updated_at;
-                    const local = getHidden();
-                    const merged = [...new Set([...local, ...remote])];
-                    if (merged.length > local.length) {
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+                    const remote = parseGist(r);
+                    if (!remote || equal(remote.blocked, lastSyncedIds)) return;
+                    const current = getHidden();
+                    const merged = applyRemote(remote.blocked, current);
+                    if (!equal(merged, current)) {
+                        saveHidden(merged);
                         injectStyles();
-                        console.log(`[wallapop_hide_items] Synced ${merged.length - local.length} new items from Gist`);
-                    } else if (remote.length > 0) {
-                        console.log(`[wallapop_hide_items] Fetched ${remote.length} items, already in sync`);
+                        console.log(`[wallapop_hide_items] Synced ${merged.length} items from Gist`);
                     }
-                    if (remoteTimestamp) {
-                        lastRemoteTimestamp = remoteTimestamp;
-                        try { localStorage.setItem(LAST_SYNC_KEY, remoteTimestamp); } catch {}
-                    }
+                    lastSyncedIds = remote.blocked;
+                    persistSynced();
+                    if (!equal(merged, remote.blocked)) this.schedule();
                 })
-                .catch(e => console.warn('[wallapop_hide_items] Fetch failed:', e.status || e))
-                .finally(() => syncing = false);
+                .catch(e => console.warn('[wallapop_hide_items] Fetch failed:', e.status || e)));
         },
 
         push() {
-            if (!this.cfg()) return;
-            
-            // Verificar si el remoto es más reciente antes de pushear
-            req('GET', `gists/${this.cfg().id}`)
+            const conf = this.cfg();
+            if (!conf) return;
+            serial(() => req('GET', `gists/${conf.id}`)
                 .then(r => {
-                    const content = JSON.parse(r.responseText).files[GIST_FILE]?.content;
-                    if (content) {
-                        const remoteData = JSON.parse(content);
-                        const remoteTimestamp = remoteData.updated_at;
-                        
-                        // Si el remoto es más nuevo, mergear primero
-                        if (remoteTimestamp && lastRemoteTimestamp && remoteTimestamp > lastRemoteTimestamp) {
-                            console.log(`[wallapop_hide_items] Remote is newer, merging before push`);
-                            const remote = remoteData.blocked || [];
-                            const local = getHidden();
-                            const merged = [...new Set([...local, ...remote])];
-                            localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+                    const remote = parseGist(r);
+                    if (remote && !equal(remote.blocked, lastSyncedIds)) {
+                        const current = getHidden();
+                        const merged = applyRemote(remote.blocked, current);
+                        if (!equal(merged, current)) {
+                            saveHidden(merged);
                             injectStyles();
                         }
+                        lastSyncedIds = remote.blocked;
+                        persistSynced();
+                        if (equal(getHidden(), remote.blocked)) return null;
                     }
-                    
-                    // Hacer el PUSH
-                    const now = new Date().toISOString();
+                    const local = getHidden();
+                    if (remote && equal(local, remote.blocked)) return null;
                     const payload = JSON.stringify({
                         files: {
                             [GIST_FILE]: {
                                 content: JSON.stringify({
-                                    blocked: getHidden(),
-                                    updated_at: now,
+                                    blocked: local,
+                                    updated_at: new Date().toISOString(),
                                     version: 1
                                 }, null, 2)
                             }
                         }
                     });
-                    
-                    return req('PATCH', `gists/${this.cfg().id}`, payload).then(() => now);
-                })
-                .then(timestamp => {
-                    lastRemoteTimestamp = timestamp;
-                    try { localStorage.setItem(LAST_SYNC_KEY, timestamp); } catch {}
-                    console.log(`[wallapop_hide_items] Pushed ${getHidden().length} items to Gist`);
+                    return req('PATCH', `gists/${conf.id}`, payload).then(() => {
+                        lastSyncedIds = local;
+                        persistSynced();
+                        console.log(`[wallapop_hide_items] Pushed ${local.length} items to Gist`);
+                    });
                 })
                 .catch(e => {
                     if (e.status === 429) setTimeout(() => this.push(), 60000);
                     else console.warn('[wallapop_hide_items] Push failed:', e.status || e);
-                });
+                }));
         },
 
         schedule() {
@@ -212,14 +220,14 @@
     const addHidden = id => {
         if (!/^\d+$/.test(id)) return;
         const items = getHidden();
-        if (!items.includes(id)) { items.push(id); localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); injectStyles(); sync.schedule(); }
+        if (!items.includes(id)) { items.push(id); saveHidden(items); injectStyles(); sync.schedule(); }
     };
 
     const removeHidden = id => {
         if (!/^\d+$/.test(id)) return;
         const items = getHidden();
         const idx = items.indexOf(id);
-        if (idx !== -1) { items.splice(idx, 1); localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); injectStyles(); sync.schedule(); }
+        if (idx !== -1) { items.splice(idx, 1); saveHidden(items); injectStyles(); sync.schedule(); }
     };
 
     const hideCard = link => { if (!disabled) link.closest('article, tsl-public-item-card')?.parentElement?.classList.add(FALLBACK_CLASS); };

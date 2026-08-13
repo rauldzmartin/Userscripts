@@ -87,23 +87,25 @@ The script is automatically disabled on `/app/favorites/*`, both on direct load 
 
 - **Fetch interval:** Every 30 seconds
 - **Push debounce:** 2 seconds after last hide action
-- **Merge strategy:** Union of local and remote sets (no items are lost)
+- **Merge strategy:** Last-writer-wins by content comparison — the remote snapshot wins unless you have pending local changes since your last sync, which are re-applied on top
 - **Offline mode:** Changes saved locally, synced when connection restored
-- **Conflict resolution:** Automatic merge (union of all blocked items)
+- **Conflict resolution:** Convergent — devices converge to the same set; **unblocks propagate** (no false resurrection of unblocked items)
+- **Clock-independent:** ordering relies on content comparison, not device clocks
 
 ## Architecture
 
 ### Data Flow
 
 ```
-Device A: Hide item
+Device A: Hide/unhide item
   ↓ localStorage (immediate)
   ↓ 2s debounce
   ↓ PATCH to GitHub Gist
   
 Device B: (30s later)
   ↓ GET from GitHub Gist
-  ↓ Merge with local data
+  ↓ Remote differs from last synced state → adopt it
+  ↓ Re-apply B's pending local changes on top
   ↓ Update localStorage + UI
 ```
 
@@ -112,6 +114,8 @@ Device B: (30s later)
 - **localStorage:** Local cache and offline fallback
   - Key: `wallapop_hidden_items`
   - Format: `["123456789", "987654321", ...]`
+  - Key: `wallapop_last_synced_state`
+  - Format: snapshot of the hidden list at the last successful sync (used to compute pending local changes)
 
 - **Tampermonkey Storage:** Configuration persistence
   - Key: `wallapop_gist_cfg`
@@ -150,7 +154,7 @@ Device B: (30s later)
 | Rate limit (429) | Exponential backoff (60s retry) |
 | Invalid token | Offline mode, warning in console |
 | Gist not found | Warning in console |
-| Parse error | Fallback to empty array |
+| Corrupt Gist / parse error | Ignore remote, keep local state, retry on next cycle |
 
 ## Performance
 
@@ -161,7 +165,7 @@ Device B: (30s later)
 
 ## Limitations
 
-- **No unblock sync:** Removing items from the list is not synchronized (local-only operation)
+- **Unblock sync:** Unhiding an item propagates to all devices (last-writer-wins, with pending local changes re-applied)
 - **Token security:** GitHub token grants access to all your Gists (use dedicated account if concerned)
 - **Rate limits:** 5000 requests/hour per token (sufficient for normal usage)
 - **Sync delay:** Up to 32 seconds (2s debounce + 30s interval)
@@ -217,6 +221,14 @@ Hosted at: https://github.com/rauldzmartin/Userscripts
 No license specified. Personal use script.
 
 ## Changelog
+
+### v1.2.0 (2026-08-13)
+- Sync rewritten: last-writer-wins with content-based comparison (no dependency on device clocks)
+- Unblocking an item now propagates to all devices; no more resurrection of unblocked items
+- First sync, and sync after upgrade, is a union — existing hidden items are never lost
+- Pending local changes are re-applied on top of a newer remote snapshot
+- Fetch and push are serialized (no interleaved reads/writes) and Gist data is validated before use
+- Config prompt appears only once (previously it re-prompted every 30 s if not configured)
 
 ### v1.1.4 (2026-08-13)
 - Script disabled on the favorites page (`/app/favorites/*`), including SPA navigation
