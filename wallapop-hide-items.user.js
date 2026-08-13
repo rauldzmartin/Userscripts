@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wallapop Hide Items (Synced)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.1
+// @version      1.4.2
 // @description  Hide specific items in Wallapop search results with multi-device sync
 // @author       rauldzmartin@gmail.com
 // @match        https://*.wallapop.com/*
@@ -67,7 +67,8 @@
 
     let disabled = (() => { try { return localStorage.getItem(TOGGLE_KEY) === '1'; } catch { return false; }})(),
         hideReserved = (() => { try { return localStorage.getItem(RESERVED_KEY) !== '0'; } catch { return true; }})(),
-        lastPath = location.pathname, titleModified = false, allHidden = false;
+        lastPath = location.pathname, titleModified = false, allHidden = false,
+        origTitle = null, titleUrl = '';
     
     const transient = new Set(),
           extractId = href => href?.match(ID_RE)?.[1] ?? null,
@@ -253,8 +254,13 @@
         const items = getHidden(),
               rules = [`.${FALLBACK_CLASS} ${HIDE}`];
         if (items.length) {
+            // Boundary-safe: match only the full id (end of href or followed by a
+            // URL separator) so short ids can't false-positive on longer ones.
+            const byId = id => [
+                `a[href$="-${id}"]`, `a[href*="-${id}/"]`, `a[href*="-${id}?"]`, `a[href*="-${id}#"]`
+            ].join(',');
             const sel = items.flatMap(id => [
-                `${GRID}>div:has(a[href*="-${id}"])`, `${LIST}>div:has(a[href*="-${id}"])`, `tsl-public-item-card:has(a[href*="-${id}"])`
+                `${GRID}>div:has(${byId(id)})`, `${LIST}>div:has(${byId(id)})`, `tsl-public-item-card:has(${byId(id)})`
             ]);
             rules.push(`${sel.join(',')} ${HIDE}`);
         }
@@ -364,13 +370,15 @@
     function syncTitle() {
         const title = document.querySelector(TITLE);
         if (!title) return;
-        if (!title.dataset.wallapopOrigTitle) title.dataset.wallapopOrigTitle = title.textContent;
+        const url = location.pathname + location.search;
+        if (url !== titleUrl) { titleUrl = url; origTitle = null; }
+        if (origTitle === null) origTitle = title.textContent;
         // Latched: keep the informative title even if new cards arrive.
         if (!disabled && allHidden) {
             if (title.textContent !== T.hiddenTitle) title.textContent = T.hiddenTitle;
             titleModified = true;
         } else if (titleModified && title.textContent === T.hiddenTitle) {
-            title.textContent = title.dataset.wallapopOrigTitle;
+            title.textContent = origTitle;
             titleModified = false;
         }
     }
@@ -496,7 +504,7 @@
                 e.preventDefault(); e.stopPropagation();
                 const items = getHidden();
                 if (items.includes(id)) {
-                    removeHidden(id); showCard(link);
+                    removeHidden(id); showCard(link); allHidden = false;
                     console.log(`[wallapop_hide_items] Item ${id} unhidden`);
                     btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
                     btn.title = T.hideBtn;
@@ -570,7 +578,7 @@
             e.preventDefault(); e.stopPropagation();
             const items = getHidden();
             if (items.includes(id)) {
-                removeHidden(id);
+                removeHidden(id); allHidden = false;
                 console.log(`[wallapop_hide_items] Item ${id} unhidden`);
                 btn.querySelector('svg')?.setAttribute('stroke', 'var(--chds-color-content-high, #29363d)');
                 btn.title = T.hideBtn;

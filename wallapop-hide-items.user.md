@@ -241,6 +241,11 @@ No license specified. Personal use script.
 
 ## Changelog
 
+### v1.4.2 (2026-08-13)
+- Boundary-safe hidden-item CSS selectors: the id must end the href or be followed by `/`, `?` or `#` — short ids (e.g. `-50`) can no longer false-positive on longer ones (`-507`)
+- "All hidden" state now clears immediately when you manually unhide an item (title and cards restore without waiting for a page change)
+- Original results title is tracked per search URL (pathname + query), so switching searches no longer restores the previous search's title
+
 ### v1.4.1 (2026-08-13)
 - Fix: duplicated toggle in the sidebar "Reservados" row — the wallapop-toggle is now created fresh instead of cloning the hydrated Stencil component (which re-rendered its template on top of the copied DOM)
 - Existing duplicated rows are detected and replaced automatically
