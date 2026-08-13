@@ -79,6 +79,10 @@ To change Gist ID or Token:
 
 Click the "Show hidden" / "Mostrar ocultos" button in the search filters to temporarily display hidden items.
 
+### Favorites Page
+
+The script is automatically disabled on `/app/favorites/*`, both on direct load and during SPA navigation into favorites. Hidden items therefore remain visible in your favorites grid; hiding resumes when you navigate back to search results.
+
 ### Sync Behavior
 
 - **Fetch interval:** Every 30 seconds
@@ -213,6 +217,10 @@ Hosted at: https://github.com/rauldzmartin/Userscripts
 No license specified. Personal use script.
 
 ## Changelog
+
+### v1.1.4 (2026-08-13)
+- Script disabled on the favorites page (`/app/favorites/*`), including SPA navigation
+- Injected hide styles are disabled on favorites so hidden items stay visible in the favorites grid
 
 ### v1.0.0 (2026-08-04)
 - Multi-device synchronization via GitHub Gist
