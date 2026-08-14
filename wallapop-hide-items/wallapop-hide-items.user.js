@@ -13,8 +13,8 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
-// @updateURL    https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items.user.js
-// @downloadURL  https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items.user.js
+// @updateURL    https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items/wallapop-hide-items.user.js
+// @downloadURL  https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items/wallapop-hide-items.user.js
 // ==/UserScript==
 
 (() => {
