@@ -216,7 +216,7 @@
   function updateProgressToast(toastEl, current, total, listTitle) {
     if (!toastEl) return;
     const percent = Math.round((current / total) * 100);
-    toastEl.innerText = `⏳  Procesando lista ${current}/${total} (${percent}%): ${listTitle}...`;
+    toastEl.innerText = `⏳  Processing list ${current}/${total} (${percent}%): ${listTitle}...`;
   }
 
   /**
@@ -811,7 +811,7 @@
       const stats = result.stats;
       transitionToast(
         loader,
-        `Guardando ${stats.totalItems} registros de ${stats.totalLists} listas…`,
+        `Saving ${stats.totalItems} records from ${stats.totalLists} lists…`,
         "info",
         1500,
       );
@@ -821,7 +821,7 @@
       setTimeout(
         () =>
           showToast(
-            `Exportado: ${stats.totalLists} listas, ${stats.totalFields} campos, ${stats.totalItems} registros`,
+            `Exported: ${stats.totalLists} lists, ${stats.totalFields} fields, ${stats.totalItems} records`,
             "success",
             5000,
           ),
@@ -1032,13 +1032,13 @@
         );
       })
       .filter((rec) => {
-        // Filtrar registros que solo tienen Id o valores por defecto
+        // Filter records with only Id or default values
         const meaningfulKeys = Object.keys(rec).filter((k) => {
           if (k === "Id") return false;
           const val = rec[k];
-          // Excluir null/undefined
+          // Exclude null/undefined
           if (val == null) return false;
-          // Excluir false (valor por defecto común en Yes/No)
+          // Exclude false (common default in Yes/No)
           if (val === false) return false;
           return true;
         });
@@ -1097,15 +1097,15 @@
         columns,
         views,
         sampleItems: (itemsData.value ?? []).map(cleanItem).filter((item) => {
-          // Filtrar items que solo tienen metadatos o valores por defecto
+          // Filter items with only metadata or default values
           const meaningfulKeys = Object.keys(item).filter((k) => {
-            // Excluir metadatos del sistema
+            // Exclude system metadata
             if (["Id", "Created", "Modified", "AuthorId", "EditorId", "CheckoutUserId"].includes(k))
               return false;
             const val = item[k];
-            // Excluir null/undefined
+            // Exclude null/undefined
             if (val == null) return false;
-            // Excluir false (valor por defecto común en Yes/No)
+            // Exclude false (common default in Yes/No)
             if (val === false) return false;
             return true;
           });

@@ -1,20 +1,20 @@
 # Userscripts
 
-Colección de userscripts para [Tampermonkey](https://www.tampermonkey.net/).
+A collection of [Tampermonkey](https://www.tampermonkey.net/) userscripts.
 
 ## Scripts
 
-| Script | Descripción | Instalación |
+| Script | Description | Installation |
 |---|---|---|
-| [SharePoint Tools](sharepoint-tools/) | Inspecciona y exporta listas de SharePoint Modern (estructura + registros) vía REST API | [sharepoint_tools.js](https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/sharepoint-tools/sharepoint_tools.js) |
-| [Wallapop Hide Items](wallapop-hide-items/) | Oculta anuncios concretos en Wallapop con sincronización multi-dispositivo vía GitHub gist | [wallapop-hide-items.user.js](https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items/wallapop-hide-items.user.js) |
+| [SharePoint Tools](sharepoint-tools/) | Inspect and export SharePoint Modern lists (structure + records) via the REST API | [sharepoint_tools.js](https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/sharepoint-tools/sharepoint_tools.js) |
+| [Wallapop Hide Items](wallapop-hide-items/) | Hide specific items in Wallapop search results with multi-device sync via GitHub Gist | [wallapop-hide-items.user.js](https://raw.githubusercontent.com/rauldzmartin/Userscripts/main/wallapop-hide-items/wallapop-hide-items.user.js) |
 
-Cada script tiene su propio README con instrucciones de instalación y uso.
+Each script has its own README with installation and usage instructions.
 
-## Instalación
+## Installation
 
-1. Instala [Tampermonkey](https://www.tampermonkey.net/) en tu navegador.
-2. Abre el enlace **Instalación** del script que quieras.
-3. Tampermonkey te ofrecerá instalarlo — acepta.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) in your browser.
+2. Open the **Installation** link of the script you want.
+3. Tampermonkey will offer to install it — accept.
 
-> **Nota:** si ya tenías instalado *Wallapop Hide Items* antes del 14/08/2026, reinstálalo una vez desde el enlace de arriba para que la auto-actualización apunte a la nueva ruta.
+> **Note:** If you already had *Wallapop Hide Items* installed before 14/08/2026, reinstall it once from the link above so auto-update points to the new path.
